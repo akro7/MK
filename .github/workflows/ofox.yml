@@ -236,9 +236,7 @@ EOF
         if [ $BUILD_EXIT -ne 0 ]; then
           echo "BUILD_SUCCESS=false" >> $GITHUB_ENV
           echo "❌ Build FAILED!"
-          echo "=== ERRORS ==="
           grep -i "error:" /tmp/build.log | tail -30 || true
-          echo "=== LAST 80 LINES ==="
           tail -80 /tmp/build.log
           exit 1
         fi
@@ -252,7 +250,6 @@ EOF
         OUT_DIR="workspace/out/target/product/${{ github.event.inputs.DEVICE_NAME }}"
         BUILD_DATE=$(date +%Y%m%d)
         echo "BUILD_DATE=$BUILD_DATE" >> $GITHUB_ENV
-        echo "=== Output directory ==="
         ls -la $OUT_DIR/ 2>/dev/null || echo "Output dir empty!"
 
         RECOVERY_IMG="$OUT_DIR/recovery.img"
@@ -266,7 +263,6 @@ EOF
           echo "✅ recovery.img found!"
         elif [ -n "$FOX_ZIP" ]; then
           echo "RELEASE_SUCCESS=true" >> $GITHUB_ENV
-          echo "FOX_ZIP_PATH=$FOX_ZIP" >> $GITHUB_ENV
           echo "✅ OrangeFox zip: $FOX_ZIP"
         else
           echo "RELEASE_SUCCESS=false" >> $GITHUB_ENV
@@ -303,5 +299,4 @@ EOF
           ## ❌ Build Failed - AKRO Edition
           - **Device:** Redmi Note 15 4G (spinel)
           - **Run ID:** ${{ github.run_id }}
-          - **Date:** ${{ github.event.repository.updated_at }}
-          - **Log:** راجع ملف `build.log` المرفق للتفاصيل
+          - **Log:** راجع ملف build.log المرفق للتفاصيل
