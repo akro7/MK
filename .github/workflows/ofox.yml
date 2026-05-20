@@ -82,24 +82,23 @@ jobs:
       run: |
         cd workspace
         rm -rf bootable/recovery
-        # جلب السورس الأساسي من جيتلاب الرسمي لـ OrangeFox
+        
+        # كلون سورس الريكفري الأساسي من جيتلاب
         git clone https://gitlab.com/OrangeFox/bootable/Recovery.git \
           -b ${{ github.event.inputs.FOX_BRANCH }} \
           bootable/recovery --depth=1
         echo "✅ OrangeFox cloned @ ${{ github.event.inputs.FOX_BRANCH }}"
         
-        # تنظيف يدوي لأي تعارض مسارات قديم لتفادي كراش المجلدات غير الفارغة
+        # جلب ثيم الواجهة الرسمي لـ OrangeFox لتجنب النقص عند عمل ميك بيلد
         rm -rf bootable/recovery/gui/theme || true
+        git clone https://gitlab.com/OrangeFox/misc/theme.git bootable/recovery/gui/theme --depth=1 || true
+        echo "✅ Theme integration completed"
         
-        # سحب المكونات والاعتماديات الخاصة بالواجهة بشكل آمن ومباشر
-        cd bootable/recovery
-        git clone https://gitlab.com/OrangeFox/misc/theme.git gui/theme --depth=1 || true
-        
-        cd ../..
-        find workspace/bootable/recovery -name "*.sh" -exec chmod +x {} \;
-        find workspace/bootable/recovery -name "*.py" -exec chmod +x {} \; 2>/dev/null || true
-        find workspace/bootable/recovery/prebuilt -type f -exec chmod +x {} \; 2>/dev/null || true
-        echo "✅ Permissions and structure fixed"
+        # تصحيح مسارات إعطاء الصلاحيات لتعمل محلياً بدون إظهار No such file أو خطأ مسار
+        find bootable/recovery -name "*.sh" -exec chmod +x {} \;
+        find bootable/recovery -name "*.py" -exec chmod +x {} \; 2>/dev/null || true
+        find bootable/recovery/prebuilt -type f -exec chmod +x {} \; 2>/dev/null || true
+        echo "✅ Permissions fixed successfully"
 
     - name: 6. Fix Device Tree & BoardConfig
       run: |
@@ -112,12 +111,12 @@ jobs:
         echo "TW_DEFAULT_BRIGHTNESS := 1200" >> BoardConfig.mk
         echo "✅ TW_MAX_BRIGHTNESS injected into BoardConfig.mk"
 
-        # حذف المتغير الملغي لـ BOOT_CONTROL لتجنب كراش أندرويد 12.1
+        # تعطيل المتغير الملغي لـ BOOT_CONTROL الذي تسبب في كراش الخطوة 9 سابقاً
         sed -i 's/PRODUCT_STATIC_BOOT_CONTROL_HAL/# PRODUCT_STATIC_BOOT_CONTROL_HAL/g' device.mk || true
         sed -i 's/PRODUCT_STATIC_BOOT_CONTROL_HAL/# PRODUCT_STATIC_BOOT_CONTROL_HAL/g' *.mk || true
         echo "✅ Obsolete BOOT_CONTROL_HAL disabled"
 
-        # حذف system_dlkm الغير صالح في TWRP 12.1
+        # حذف system_dlkm من الـ Partition List
         sed -i 's/\bsystem_dlkm\b[[:space:]]*//' BoardConfig.mk
         sed -i 's/[[:space:]]*\bsystem_dlkm\b//' BoardConfig.mk
         grep -rl "system_dlkm" . --include="*.mk" | xargs -r sed -i 's/ system_dlkm//g; s/system_dlkm //g'
@@ -240,7 +239,7 @@ jobs:
         mkdir -p final_output/
         RECOVERY_IMG="$OUT_DIR/recovery.img"
         
-        # البحث عن ملف الـ zip الخاص بـ OrangeFox بشكل ديناميكي داخل مسار المخرجات الصحيح
+        # سحب ملف الـ zip التلقائي لـ OrangeFox من داخل الهيكل الداخلي لمجلد الـ out الفعلي
         FOX_ZIP=$(find workspace/out/ -name "OrangeFox*.zip" 2>/dev/null | head -n 1)
 
         if [ -f "$RECOVERY_IMG" ]; then
@@ -250,18 +249,18 @@ jobs:
           md5sum recovery.img > recovery.img.md5
           cd ..
           echo "BUILD_SUCCESS=true" >> $GITHUB_ENV
-          echo "✅ recovery.img added to packaging"
+          echo "✅ recovery.img added to package targets"
         fi
 
         if [ -n "$FOX_ZIP" ] && [ -f "$FOX_ZIP" ]; then
           cp "$FOX_ZIP" final_output/
           echo "BUILD_SUCCESS=true" >> $GITHUB_ENV
-          echo "✅ OrangeFox flashable zip added to packaging"
+          echo "✅ OrangeFox flashable zip added to package targets"
         fi
 
         if [ ! -f "$RECOVERY_IMG" ] && [ -z "$FOX_ZIP" ]; then
           echo "BUILD_SUCCESS=false" >> $GITHUB_ENV
-          echo "❌ Output targets were not found in out directory!"
+          echo "❌ Out targets completely missing from system folders"
           exit 1
         fi
 
