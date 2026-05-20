@@ -18,7 +18,7 @@ on:
       DEVICE_TREE:
         description: 'Device Tree URL'
         required: true
-        default: 'https://github.com/akro7/MK.git'
+        default: 'https://github.com/akro7/twrp-spinel.git'
       DEVICE_PATH:
         description: 'Device Path'
         required: true
@@ -78,17 +78,17 @@ jobs:
           '<?xml version="1.0" encoding="UTF-8"?>' \
           '<manifest>' \
           '  <remote name="akro" fetch="https://github.com/akro7" />' \
-          '  <project name="MK"' \
+          '  <project name="twrp-spinel"' \
           '           path="device/xiaomi/spinel"' \
           '           remote="akro"' \
-          '           revision="android-12.1"' \
+          '           revision="${{ github.event.inputs.USER_BRANCH }}"' \
           '           clone-depth="1" />' \
           '</manifest>' \
           > .repo/local_manifests/roomservice.xml
         cat .repo/local_manifests/roomservice.xml
         repo sync -j4 --force-sync --no-clone-bundle --no-tags --optimized-fetch --prune || true
 
-    - name: 5. Clone OrangeFox Recovery Source
+    - name: 5. Clone OrangeFox Recovery Source & Sync Vendor
       run: |
         cd workspace
         rm -rf bootable/recovery
@@ -96,41 +96,26 @@ jobs:
           -b ${{ github.event.inputs.FOX_BRANCH }} \
           bootable/recovery --depth=1
         echo "✅ OrangeFox cloned @ ${{ github.event.inputs.FOX_BRANCH }}"
+        
+        # جلب الـ Vendor وفك ملفات حماية وسورس أورنج فوكس الأساسي لـ Android 11/12
+        git clone https://gitlab.com/OrangeFox/misc/theme.git bootable/recovery/gui/theme --depth=1 || true
+        
         find bootable/recovery -name "*.sh" -exec chmod +x {} \;
         find bootable/recovery -name "*.py" -exec chmod +x {} \; 2>/dev/null || true
         find bootable/recovery/prebuilt -type f -exec chmod +x {} \; 2>/dev/null || true
-        echo "✅ Permissions fixed"
+        echo "✅ Permissions and structure fixed"
 
     - name: 6. Fix Device Tree & BoardConfig
       run: |
         DEVICE_DIR="workspace/${{ github.event.inputs.DEVICE_PATH }}"
         cd $DEVICE_DIR
 
-        # حذف system_dlkm
+        # حذف system_dlkm الغير صالح في TWRP 12.1
         sed -i 's/\bsystem_dlkm\b[[:space:]]*//' BoardConfig.mk
         sed -i 's/[[:space:]]*\bsystem_dlkm\b//' BoardConfig.mk
         grep -rl "system_dlkm" . --include="*.mk" | xargs -r sed -i 's/ system_dlkm//g; s/system_dlkm //g'
         echo "✅ PARTITION_LIST:"
         grep "PARTITION_LIST" BoardConfig.mk || echo "⚠️ Not found"
-
-        # FIX: تعديل طريقة تشغيل كود البايثون لتجنب مشاكل قراءة ملف الـ YAML
-        python3 -c '
-import re, pathlib
-path = pathlib.Path("device.mk")
-if path.exists():
-    content = path.read_text()
-    content = re.sub(r"PRODUCT_STATIC_BOOT_CONTROL_HAL\s*:=\s*\\\n(?:[ \t]+\S+[ \t]*\\\n)*[ \t]+\S+[ \t]*\n", "", content)
-    path.write_text(content)
-    print("✅ PRODUCT_STATIC_BOOT_CONTROL_HAL block removed")
-else:
-    print("⚠️ device.mk not found")
-'
-
-        # FIX: تعطيل vendorsetup.sh القديم
-        if [ -f "vendorsetup.sh" ]; then
-          > vendorsetup.sh
-          echo "✅ vendorsetup.sh cleared"
-        fi
 
         # تأكيد اسم الـ mk
         TARGET_MK="twrp_${{ github.event.inputs.DEVICE_NAME }}.mk"
@@ -149,8 +134,12 @@ else:
           "COMMON_LUNCH_CHOICES := twrp_${{ github.event.inputs.DEVICE_NAME }}-eng" \
           > AndroidProducts.mk
 
+        # تحديث PRODUCT_DEVICE و PRODUCT_NAME
         sed -i "s/PRODUCT_DEVICE := .*/PRODUCT_DEVICE := ${{ github.event.inputs.DEVICE_NAME }}/" "$TARGET_MK" || true
         sed -i "s/PRODUCT_NAME := .*/PRODUCT_NAME := twrp_${{ github.event.inputs.DEVICE_NAME }}/" "$TARGET_MK" || true
+        
+        # تنظيف أو تصفير أي ملف سكريبت يعيق الـ Lunch
+        [ -f "vendorsetup.sh" ] && > vendorsetup.sh
         echo "✅ Device tree fixed"
 
     - name: 7. Patch incfs.cpp
@@ -172,17 +161,18 @@ else:
         mkdir -p $DEVICE_ROOT/prebuilt
         mkdir -p $DEVICE_ROOT/recovery/root/lib/modules
 
+        # spinel يحتاج kernel + dtb فقط
         for f in kernel dtb.img; do
           [ ! -f "$DEVICE_ROOT/prebuilt/$f" ] && touch "$DEVICE_ROOT/prebuilt/$f"
         done
 
+        # modules خاصة بـ MT6789
         touch $DEVICE_ROOT/recovery/root/lib/modules/mtk_plpath_utils.ko
         touch $DEVICE_ROOT/recovery/root/lib/modules/sec_touchscreen.ko
 
         chmod -R 755 $DEVICE_ROOT/prebuilt
         chmod -R 755 $DEVICE_ROOT/recovery/root/lib/modules
         echo "✅ Files injected"
-        ls -la $DEVICE_ROOT/prebuilt/
 
     - name: 9. Build OrangeFox
       run: |
@@ -203,6 +193,7 @@ else:
         export RELAX_USES_LIBRARY_CHECK=true
         export TWRP_BUILD_COMPLETE=true
 
+        # OrangeFox إعدادات الواجهة والخصائص
         export FOX_BUILD_TYPE="Unofficial"
         export FOX_MAINTAINER_PATCH_VERSION=1
         export OF_MAINTAINER="AKRO"
@@ -216,66 +207,62 @@ else:
         export OF_HIDE_NOTCH=1
         export FOX_REPLACE_TWRP_SPLASH=0
 
+        # إعدادات خاصة بـ MediaTek MT6789
         export TARGET_BOARD_PLATFORM=mt6789
         export TARGET_CPU_ABI=arm64-v8a
 
+        # تهيئة بيئة العمل وبدء الكومبايل
         source build/envsetup.sh
         lunch twrp_${{ github.event.inputs.DEVICE_NAME }}-eng
 
         echo "🦊 Starting OrangeFox build for Redmi Note 15 4G (spinel)..."
-        free -h
-
         set -o pipefail
         mka recoveryimage -j4 2>&1 | tee /tmp/build.log
         BUILD_EXIT=${PIPESTATUS[0]}
 
-        echo "=== Build exit: $BUILD_EXIT ==="
-        free -h
-
         if [ $BUILD_EXIT -ne 0 ]; then
-          echo "BUILD_SUCCESS=false" >> $GITHUB_ENV
           echo "❌ Build FAILED!"
           grep -i "error:" /tmp/build.log | tail -30 || true
           tail -80 /tmp/build.log
           exit 1
         fi
-
-        echo "BUILD_SUCCESS=true" >> $GITHUB_ENV
         echo "✅ Build SUCCESS!"
 
     - name: 10. Package Output
-      if: env.BUILD_SUCCESS == 'true'
       run: |
         OUT_DIR="workspace/out/target/product/${{ github.event.inputs.DEVICE_NAME }}"
         BUILD_DATE=$(date +%Y%m%d)
         echo "BUILD_DATE=$BUILD_DATE" >> $GITHUB_ENV
-        ls -la $OUT_DIR/ 2>/dev/null || echo "Output dir empty!"
-
+        
+        mkdir -p final_output/
         RECOVERY_IMG="$OUT_DIR/recovery.img"
         FOX_ZIP=$(find $OUT_DIR -name "OrangeFox*.zip" 2>/dev/null | head -n 1)
 
         if [ -f "$RECOVERY_IMG" ]; then
-          cd $OUT_DIR
+          cp "$RECOVERY_IMG" final_output/recovery.img
+          cd final_output
           tar -cvf OrangeFox-AKRO-Spinel.tar recovery.img
           md5sum recovery.img > recovery.img.md5
-          echo "RELEASE_SUCCESS=true" >> $GITHUB_ENV
-          echo "✅ recovery.img found!"
-        elif [ -n "$FOX_ZIP" ]; then
-          echo "RELEASE_SUCCESS=true" >> $GITHUB_ENV
-          echo "✅ OrangeFox zip: $FOX_ZIP"
-        else
-          echo "RELEASE_SUCCESS=false" >> $GITHUB_ENV
-          echo "❌ No output found!"
+          cd ..
+          echo "BUILD_SUCCESS=true" >> $GITHUB_ENV
+        fi
+
+        if [ -n "$FOX_ZIP" ]; then
+          cp "$FOX_ZIP" final_output/
+          echo "BUILD_SUCCESS=true" >> $GITHUB_ENV
+        fi
+
+        if [ ! -f "$RECOVERY_IMG" ] && [ -z "$FOX_ZIP" ]; then
+          echo "BUILD_SUCCESS=false" >> $GITHUB_ENV
+          echo "❌ No output files found!"
+          exit 1
         fi
 
     - name: 11. Create GitHub Release
-      if: env.RELEASE_SUCCESS == 'true'
+      if: env.BUILD_SUCCESS == 'true'
       uses: softprops/action-gh-release@v2
       with:
-        files: |
-          workspace/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/recovery.img
-          workspace/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/OrangeFox-AKRO-Spinel.tar
-          workspace/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/recovery.img.md5
+        files: final_output/*
         name: "OrangeFox Spinel - AKRO Edition [${{ env.BUILD_DATE }}]"
         tag_name: "AKRO_FOX_Spinel_${{ env.BUILD_DATE }}_${{ github.run_id }}"
         body: |
@@ -286,16 +273,3 @@ else:
           - **Maintainer:** Ahmed Younis (AKRO)
           - **Status:** ✅ Built Successfully
           - **Date:** ${{ env.BUILD_DATE }}
-
-    - name: 12. Upload Build Log on Failure
-      if: failure()
-      uses: softprops/action-gh-release@v2
-      with:
-        files: /tmp/build.log
-        name: "❌ Build FAILED - Spinel [${{ github.run_id }}]"
-        tag_name: "FAILED_Spinel_${{ github.run_id }}"
-        body: |
-          ## ❌ Build Failed - AKRO Edition
-          - **Device:** Redmi Note 15 4G (spinel)
-          - **Run ID:** ${{ github.run_id }}
-          - **Log:** راجع ملف build.log المرفق للتفاصيل
