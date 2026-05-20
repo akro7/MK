@@ -1,4 +1,4 @@
-name: OrangeFox Recovery Builder - AKRO (Spinel Edition)
+name: Build OrangeFox by akro7
 
 on:
   workflow_dispatch:
@@ -60,13 +60,11 @@ jobs:
         curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
         chmod a+x ~/bin/repo
         sudo ln -sf ~/bin/repo /usr/bin/repo
-        echo "=== System Info ==="
-        nproc && free -h && df -h
 
     - name: 4. Initialize & Sync Source
       run: |
         mkdir workspace && cd workspace
-        git config --global user.name "AKRO"
+        git config --global user.name "akro7"
         git config --global user.email "akro@orangefox.me"
         repo init --depth=1 \
           -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git \
@@ -83,18 +81,15 @@ jobs:
         cd workspace
         rm -rf bootable/recovery
         
-        # كلون سورس الريكفري الأساسي من جيتلاب
         git clone https://gitlab.com/OrangeFox/bootable/Recovery.git \
           -b ${{ github.event.inputs.FOX_BRANCH }} \
           bootable/recovery --depth=1
         echo "✅ OrangeFox cloned @ ${{ github.event.inputs.FOX_BRANCH }}"
         
-        # جلب ثيم الواجهة الرسمي لـ OrangeFox لتجنب النقص عند عمل ميك بيلد
         rm -rf bootable/recovery/gui/theme || true
         git clone https://gitlab.com/OrangeFox/misc/theme.git bootable/recovery/gui/theme --depth=1 || true
         echo "✅ Theme integration completed"
         
-        # تصحيح مسارات إعطاء الصلاحيات لتعمل محلياً بدون إظهار No such file أو خطأ مسار
         find bootable/recovery -name "*.sh" -exec chmod +x {} \;
         find bootable/recovery -name "*.py" -exec chmod +x {} \; 2>/dev/null || true
         find bootable/recovery/prebuilt -type f -exec chmod +x {} \; 2>/dev/null || true
@@ -102,53 +97,47 @@ jobs:
 
     - name: 6. Fix Device Tree & BoardConfig
       run: |
-        cd workspace/${{ github.event.inputs.DEVICE_PATH }}
+        # الانتقال الصحيح من المجلد الجذري للمشروع لضمان عدم حدوث خطأ المسار
+        cd $GITHUB_WORKSPACE/workspace/${{ github.event.inputs.DEVICE_PATH }}
 
-        # حقن قيم الإضاءة الإجبارية لمنع كراش TW_MAX_BRIGHTNESS القديم
+        # حقن قيم الإضاءة الإجبارية لـ OrangeFox لمنع خطأ كراش TW_MAX_BRIGHTNESS
         echo "" >> BoardConfig.mk
         echo "# OrangeFox Brightness Fixes" >> BoardConfig.mk
         echo "TW_MAX_BRIGHTNESS := 2047" >> BoardConfig.mk
         echo "TW_DEFAULT_BRIGHTNESS := 1200" >> BoardConfig.mk
         echo "✅ TW_MAX_BRIGHTNESS injected into BoardConfig.mk"
 
-        # تعطيل المتغير الملغي لـ BOOT_CONTROL الذي تسبب في كراش الخطوة 9 سابقاً
+        # تعطيل وهدم تعارض المتغير الملغي لـ BOOT_CONTROL
         sed -i 's/PRODUCT_STATIC_BOOT_CONTROL_HAL/# PRODUCT_STATIC_BOOT_CONTROL_HAL/g' device.mk || true
         sed -i 's/PRODUCT_STATIC_BOOT_CONTROL_HAL/# PRODUCT_STATIC_BOOT_CONTROL_HAL/g' *.mk || true
         echo "✅ Obsolete BOOT_CONTROL_HAL disabled"
 
-        # حذف system_dlkm من الـ Partition List
-        sed -i 's/\bsystem_dlkm\b[[:space:]]*//' BoardConfig.mk
-        sed -i 's/[[:space:]]*\bsystem_dlkm\b//' BoardConfig.mk
-        grep -rl "system_dlkm" . --include="*.mk" | xargs -r sed -i 's/ system_dlkm//g; s/system_dlkm //g'
-        echo "✅ PARTITION_LIST verified"
-
-        # تصحيح وتأكيد اسم الـ mk
+        # تنظيف وتأكيد مطابقة اسم ملف الـ mk المستهدف
         TARGET_MK="twrp_${{ github.event.inputs.DEVICE_NAME }}.mk"
         if [ ! -f "$TARGET_MK" ]; then
           FOUND_MK=$(ls *${{ github.event.inputs.DEVICE_NAME }}.mk 2>/dev/null | head -n 1)
           [ -n "$FOUND_MK" ] && mv "$FOUND_MK" "$TARGET_MK" && echo "✅ Renamed → $TARGET_MK"
         fi
 
-        # omni → twrp
+        # استبدال البادئات المتعارضة في بنية الـ Makefiles
         find . -type f \( -name "*.mk" -o -name "*.bp" \) \
           -exec sed -i 's/omni_/twrp_/g; s/vendor\/omni/vendor\/twrp/g' {} +
 
-        # AndroidProducts.mk
+        # إعادة بناء وهيكلة ملف تعريف الحزم المضافة AndroidProducts.mk
         printf '%s\n' \
           "PRODUCT_MAKEFILES := \$(LOCAL_DIR)/$TARGET_MK" \
           "COMMON_LUNCH_CHOICES := twrp_${{ github.event.inputs.DEVICE_NAME }}-eng" \
           > AndroidProducts.mk
 
-        # تحديث PRODUCT_DEVICE و PRODUCT_NAME
         sed -i "s/PRODUCT_DEVICE := .*/PRODUCT_DEVICE := ${{ github.event.inputs.DEVICE_NAME }}/" "$TARGET_MK" || true
         sed -i "s/PRODUCT_NAME := .*/PRODUCT_NAME := twrp_${{ github.event.inputs.DEVICE_NAME }}/" "$TARGET_MK" || true
         
         [ -f "vendorsetup.sh" ] && > vendorsetup.sh
-        echo "✅ Device tree fixed successfully"
+        echo "✅ Device tree configured successfully"
 
     - name: 7. Patch incfs.cpp
       run: |
-        cd workspace
+        cd $GITHUB_WORKSPACE/workspace
         INCFS_CPP="system/incremental_delivery/incfs/incfs.cpp"
         if [ -f "$INCFS_CPP" ]; then
           sed -i '1i #include <chrono>\n#include <ratio>\nusing namespace std::chrono;' "$INCFS_CPP"
@@ -161,6 +150,7 @@ jobs:
 
     - name: 8. Inject Required Files
       run: |
+        cd $GITHUB_WORKSPACE
         DEVICE_ROOT="workspace/${{ github.event.inputs.DEVICE_PATH }}"
         mkdir -p $DEVICE_ROOT/prebuilt
         mkdir -p $DEVICE_ROOT/recovery/root/lib/modules
@@ -174,11 +164,11 @@ jobs:
 
         chmod -R 755 $DEVICE_ROOT/prebuilt
         chmod -R 755 $DEVICE_ROOT/recovery/root/lib/modules
-        echo "✅ Files injected"
+        echo "✅ Dependencies injected"
 
     - name: 9. Build OrangeFox
       run: |
-        cd workspace
+        cd $GITHUB_WORKSPACE/workspace
         export JAVA_OPTS="-Xmx8g"
         export _JAVA_OPTIONS="-Xmx8g"
         ulimit -n 8192
@@ -196,10 +186,10 @@ jobs:
         export TWRP_BUILD_COMPLETE=true
         export BUILD_BROKEN_BOOT_CONTROL_HAL=true
 
-        # OrangeFox متغيرات واجهة ومميزات spinel
+        # تكوينات ومعايير بناء ريكفري OrangeFox لـ spinel
         export FOX_BUILD_TYPE="Unofficial"
         export FOX_MAINTAINER_PATCH_VERSION=1
-        export OF_MAINTAINER="AKRO"
+        export OF_MAINTAINER="akro7"
         export OF_DEVICE_NAME="Redmi Note 15 4G"
         export FOX_USE_TWRP_RECOVERY_IMAGE_BUILDER=1
         export OF_SCREEN_H=2400
@@ -210,14 +200,13 @@ jobs:
         export OF_HIDE_NOTCH=1
         export FOX_REPLACE_TWRP_SPLASH=0
 
-        # مواصفات الشيبست المشتركة لمشروعك mt6789
         export TARGET_BOARD_PLATFORM=mt6789
         export TARGET_CPU_ABI=arm64-v8a
 
         source build/envsetup.sh
         lunch twrp_${{ github.event.inputs.DEVICE_NAME }}-eng
 
-        echo "🦊 Starting OrangeFox build for Redmi Note 15 4G (spinel)..."
+        echo "🦊 Starting OrangeFox compiling pipeline..."
         set -o pipefail
         mka recoveryimage -j4 2>&1 | tee /tmp/build.log
         BUILD_EXIT=${PIPESTATUS[0]}
@@ -232,35 +221,34 @@ jobs:
 
     - name: 10. Package Output
       run: |
-        OUT_DIR="workspace/out/target/product/${{ github.event.inputs.DEVICE_NAME }}"
+        cd $GITHUB_WORKSPACE
         BUILD_DATE=$(date +%Y%m%d)
         echo "BUILD_DATE=$BUILD_DATE" >> $GITHUB_ENV
-        
         mkdir -p final_output/
-        RECOVERY_IMG="$OUT_DIR/recovery.img"
         
-        # سحب ملف الـ zip التلقائي لـ OrangeFox من داخل الهيكل الداخلي لمجلد الـ out الفعلي
+        # البحث الديناميكي الشامل داخل المخرجات لتجنب اختلافات المسارات الصلبة
+        RECOVERY_IMG=$(find workspace/out/target/product/ -name "recovery.img" 2>/dev/null | head -n 1)
         FOX_ZIP=$(find workspace/out/ -name "OrangeFox*.zip" 2>/dev/null | head -n 1)
 
-        if [ -f "$RECOVERY_IMG" ]; then
+        if [ -n "$RECOVERY_IMG" ] && [ -f "$RECOVERY_IMG" ]; then
           cp "$RECOVERY_IMG" final_output/recovery.img
           cd final_output
-          tar -cvf OrangeFox-AKRO-Spinel.tar recovery.img
+          tar -cvf OrangeFox-Spinel.tar recovery.img
           md5sum recovery.img > recovery.img.md5
           cd ..
           echo "BUILD_SUCCESS=true" >> $GITHUB_ENV
-          echo "✅ recovery.img added to package targets"
+          echo "✅ recovery.img and TAR packaged successfully"
         fi
 
         if [ -n "$FOX_ZIP" ] && [ -f "$FOX_ZIP" ]; then
           cp "$FOX_ZIP" final_output/
           echo "BUILD_SUCCESS=true" >> $GITHUB_ENV
-          echo "✅ OrangeFox flashable zip added to package targets"
+          echo "✅ Flashable OrangeFox zip added to package targets"
         fi
 
-        if [ ! -f "$RECOVERY_IMG" ] && [ -z "$FOX_ZIP" ]; then
+        if [ ! -f "final_output/recovery.img" ] && [ -z "$FOX_ZIP" ]; then
           echo "BUILD_SUCCESS=false" >> $GITHUB_ENV
-          echo "❌ Out targets completely missing from system folders"
+          echo "❌ Error: High-level build succeeded but system cannot locate output files."
           exit 1
         fi
 
@@ -270,12 +258,11 @@ jobs:
       with:
         files: final_output/*
         name: "OrangeFox Spinel - AKRO Edition [${{ env.BUILD_DATE }}]"
-        tag_name: "AKRO_FOX_Spinel_${{ env.BUILD_DATE }}_${{ github.run_id }}"
+        tag_name: "FOX_Spinel_${{ env.BUILD_DATE }}_${{ github.run_id }}"
         body: |
-          ## 🦊 OrangeFox Recovery - AKRO Edition
+          ## 🦊 OrangeFox Recovery - Unofficial
           - **Device:** Redmi Note 15 4G (spinel)
-          - **Chipset:** MediaTek Helio G91 Ultra (MT6789)
-          - **Fox Branch:** ${{ github.event.inputs.FOX_BRANCH }}
-          - **Maintainer:** Ahmed Younis (AKRO)
-          - **Status:** ✅ Built & Packaged Successfully
-          - **Date:** ${{ env.BUILD_DATE }}
+          - **Chipset:** MediaTek Helio G91 Ultra (mt6789)
+          - **Branch:** ${{ github.event.inputs.FOX_BRANCH }}
+          - **Maintainer:** ${{ github.actor }}
+          - **Status:** ✅ Completed & Stable Build
