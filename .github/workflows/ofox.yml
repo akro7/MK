@@ -78,24 +78,34 @@ jobs:
         cp -r ../current_device_tree/* ${{ github.event.inputs.DEVICE_PATH }}/
         echo "✅ Device tree moved to workspace/${{ github.event.inputs.DEVICE_PATH }}"
 
-    - name: 5. Clone OrangeFox Recovery Source
+    - name: 5. Clone OrangeFox Recovery Source & Sync External Components
       run: |
         cd workspace
         rm -rf bootable/recovery
+        # جلب السورس الأساسي من جيتلاب الرسمي لـ OrangeFox
         git clone https://gitlab.com/OrangeFox/bootable/Recovery.git \
           -b ${{ github.event.inputs.FOX_BRANCH }} \
           bootable/recovery --depth=1
         echo "✅ OrangeFox cloned @ ${{ github.event.inputs.FOX_BRANCH }}"
-        find bootable/recovery -name "*.sh" -exec chmod +x {} \;
-        find bootable/recovery -name "*.py" -exec chmod +x {} \; 2>/dev/null || true
-        find bootable/recovery/prebuilt -type f -exec chmod +x {} \; 2>/dev/null || true
-        echo "✅ Permissions fixed"
+        
+        # تنظيف يدوي لأي تعارض مسارات قديم لتفادي كراش المجلدات غير الفارغة
+        rm -rf bootable/recovery/gui/theme || true
+        
+        # سحب المكونات والاعتماديات الخاصة بالواجهة بشكل آمن ومباشر
+        cd bootable/recovery
+        git clone https://gitlab.com/OrangeFox/misc/theme.git gui/theme --depth=1 || true
+        
+        cd ../..
+        find workspace/bootable/recovery -name "*.sh" -exec chmod +x {} \;
+        find workspace/bootable/recovery -name "*.py" -exec chmod +x {} \; 2>/dev/null || true
+        find workspace/bootable/recovery/prebuilt -type f -exec chmod +x {} \; 2>/dev/null || true
+        echo "✅ Permissions and structure fixed"
 
     - name: 6. Fix Device Tree & BoardConfig
       run: |
         cd workspace/${{ github.event.inputs.DEVICE_PATH }}
 
-        # حقن قيم الإضاءة الإجبارية لمنع كراش TW_MAX_BRIGHTNESS
+        # حقن قيم الإضاءة الإجبارية لمنع كراش TW_MAX_BRIGHTNESS القديم
         echo "" >> BoardConfig.mk
         echo "# OrangeFox Brightness Fixes" >> BoardConfig.mk
         echo "TW_MAX_BRIGHTNESS := 2047" >> BoardConfig.mk
@@ -229,7 +239,9 @@ jobs:
         
         mkdir -p final_output/
         RECOVERY_IMG="$OUT_DIR/recovery.img"
-        FOX_ZIP=$(find $OUT_DIR -name "OrangeFox*.zip" 2>/dev/null | head -n 1)
+        
+        # البحث عن ملف الـ zip الخاص بـ OrangeFox بشكل ديناميكي داخل مسار المخرجات الصحيح
+        FOX_ZIP=$(find workspace/out/ -name "OrangeFox*.zip" 2>/dev/null | head -n 1)
 
         if [ -f "$RECOVERY_IMG" ]; then
           cp "$RECOVERY_IMG" final_output/recovery.img
@@ -238,17 +250,18 @@ jobs:
           md5sum recovery.img > recovery.img.md5
           cd ..
           echo "BUILD_SUCCESS=true" >> $GITHUB_ENV
+          echo "✅ recovery.img added to packaging"
         fi
 
-        if [ -n "$FOX_ZIP" ]; then
+        if [ -n "$FOX_ZIP" ] && [ -f "$FOX_ZIP" ]; then
           cp "$FOX_ZIP" final_output/
           echo "BUILD_SUCCESS=true" >> $GITHUB_ENV
+          echo "✅ OrangeFox flashable zip added to packaging"
         fi
 
         if [ ! -f "$RECOVERY_IMG" ] && [ -z "$FOX_ZIP" ]; then
           echo "BUILD_SUCCESS=false" >> $GITHUB_ENV
-          echo "❌ No output found!"
-          tail -30 /tmp/build.log || true
+          echo "❌ Output targets were not found in out directory!"
           exit 1
         fi
 
@@ -265,5 +278,5 @@ jobs:
           - **Chipset:** MediaTek Helio G91 Ultra (MT6789)
           - **Fox Branch:** ${{ github.event.inputs.FOX_BRANCH }}
           - **Maintainer:** Ahmed Younis (AKRO)
-          - **Status:** ✅ Built Successfully
+          - **Status:** ✅ Built & Packaged Successfully
           - **Date:** ${{ env.BUILD_DATE }}
