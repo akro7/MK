@@ -113,9 +113,19 @@ jobs:
         echo "✅ PARTITION_LIST:"
         grep "PARTITION_LIST" BoardConfig.mk || echo "⚠️ Not found"
 
-        # FIX: حذف PRODUCT_STATIC_BOOT_CONTROL_HAL من device.mk
-        sed -i '/PRODUCT_STATIC_BOOT_CONTROL_HAL/d' device.mk
-        echo "✅ Removed PRODUCT_STATIC_BOOT_CONTROL_HAL"
+        # FIX: حذف PRODUCT_STATIC_BOOT_CONTROL_HAL block كامل بـ Python
+        python3 - <<'EOF'
+import re, pathlib
+path = pathlib.Path("device.mk")
+content = path.read_text()
+content = re.sub(
+    r'PRODUCT_STATIC_BOOT_CONTROL_HAL\s*:=\s*\\\n(?:[ \t]+\S+[ \t]*\\\n)*[ \t]+\S+[ \t]*\n',
+    '',
+    content
+)
+path.write_text(content)
+print("✅ PRODUCT_STATIC_BOOT_CONTROL_HAL block removed")
+EOF
 
         # FIX: تعطيل vendorsetup.sh القديم
         if [ -f "vendorsetup.sh" ]; then
@@ -224,6 +234,7 @@ jobs:
         free -h
 
         if [ $BUILD_EXIT -ne 0 ]; then
+          echo "BUILD_SUCCESS=false" >> $GITHUB_ENV
           echo "❌ Build FAILED!"
           echo "=== ERRORS ==="
           grep -i "error:" /tmp/build.log | tail -30 || true
@@ -231,9 +242,12 @@ jobs:
           tail -80 /tmp/build.log
           exit 1
         fi
+
+        echo "BUILD_SUCCESS=true" >> $GITHUB_ENV
         echo "✅ Build SUCCESS!"
 
     - name: 10. Package Output
+      if: env.BUILD_SUCCESS == 'true'
       run: |
         OUT_DIR="workspace/out/target/product/${{ github.event.inputs.DEVICE_NAME }}"
         BUILD_DATE=$(date +%Y%m%d)
@@ -248,20 +262,19 @@ jobs:
           cd $OUT_DIR
           tar -cvf OrangeFox-AKRO-Spinel.tar recovery.img
           md5sum recovery.img > recovery.img.md5
-          echo "BUILD_SUCCESS=true" >> $GITHUB_ENV
+          echo "RELEASE_SUCCESS=true" >> $GITHUB_ENV
           echo "✅ recovery.img found!"
         elif [ -n "$FOX_ZIP" ]; then
-          echo "BUILD_SUCCESS=true" >> $GITHUB_ENV
+          echo "RELEASE_SUCCESS=true" >> $GITHUB_ENV
           echo "FOX_ZIP_PATH=$FOX_ZIP" >> $GITHUB_ENV
           echo "✅ OrangeFox zip: $FOX_ZIP"
         else
-          echo "BUILD_SUCCESS=false" >> $GITHUB_ENV
+          echo "RELEASE_SUCCESS=false" >> $GITHUB_ENV
           echo "❌ No output found!"
-          tail -30 /tmp/build.log || true
         fi
 
     - name: 11. Create GitHub Release
-      if: env.BUILD_SUCCESS == 'true'
+      if: env.RELEASE_SUCCESS == 'true'
       uses: softprops/action-gh-release@v2
       with:
         files: |
@@ -278,3 +291,17 @@ jobs:
           - **Maintainer:** Ahmed Younis (AKRO)
           - **Status:** ✅ Built Successfully
           - **Date:** ${{ env.BUILD_DATE }}
+
+    - name: 12. Upload Build Log on Failure
+      if: failure()
+      uses: softprops/action-gh-release@v2
+      with:
+        files: /tmp/build.log
+        name: "❌ Build FAILED - Spinel [${{ github.run_id }}]"
+        tag_name: "FAILED_Spinel_${{ github.run_id }}"
+        body: |
+          ## ❌ Build Failed - AKRO Edition
+          - **Device:** Redmi Note 15 4G (spinel)
+          - **Run ID:** ${{ github.run_id }}
+          - **Date:** ${{ github.event.repository.updated_at }}
+          - **Log:** راجع ملف `build.log` المرفق للتفاصيل
