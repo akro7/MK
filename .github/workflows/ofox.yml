@@ -113,19 +113,18 @@ jobs:
         echo "✅ PARTITION_LIST:"
         grep "PARTITION_LIST" BoardConfig.mk || echo "⚠️ Not found"
 
-        # FIX: حذف PRODUCT_STATIC_BOOT_CONTROL_HAL block كامل بـ Python
-        python3 - <<'EOF'
+        # FIX: تعديل طريقة تشغيل كود البايثون لتجنب مشاكل قراءة ملف الـ YAML
+        python3 -c '
 import re, pathlib
 path = pathlib.Path("device.mk")
-content = path.read_text()
-content = re.sub(
-    r'PRODUCT_STATIC_BOOT_CONTROL_HAL\s*:=\s*\\\n(?:[ \t]+\S+[ \t]*\\\n)*[ \t]+\S+[ \t]*\n',
-    '',
-    content
-)
-path.write_text(content)
-print("✅ PRODUCT_STATIC_BOOT_CONTROL_HAL block removed")
-EOF
+if path.exists():
+    content = path.read_text()
+    content = re.sub(r"PRODUCT_STATIC_BOOT_CONTROL_HAL\s*:=\s*\\\n(?:[ \t]+\S+[ \t]*\\\n)*[ \t]+\S+[ \t]*\n", "", content)
+    path.write_text(content)
+    print("✅ PRODUCT_STATIC_BOOT_CONTROL_HAL block removed")
+else:
+    print("⚠️ device.mk not found")
+'
 
         # FIX: تعطيل vendorsetup.sh القديم
         if [ -f "vendorsetup.sh" ]; then
