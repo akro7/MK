@@ -106,21 +106,35 @@ jobs:
         DEVICE_DIR="workspace/${{ github.event.inputs.DEVICE_PATH }}"
         cd $DEVICE_DIR
 
+        # حذف system_dlkm
         sed -i 's/\bsystem_dlkm\b[[:space:]]*//' BoardConfig.mk
         sed -i 's/[[:space:]]*\bsystem_dlkm\b//' BoardConfig.mk
         grep -rl "system_dlkm" . --include="*.mk" | xargs -r sed -i 's/ system_dlkm//g; s/system_dlkm //g'
         echo "✅ PARTITION_LIST:"
         grep "PARTITION_LIST" BoardConfig.mk || echo "⚠️ Not found"
 
+        # FIX: حذف PRODUCT_STATIC_BOOT_CONTROL_HAL من device.mk
+        sed -i '/PRODUCT_STATIC_BOOT_CONTROL_HAL/d' device.mk
+        echo "✅ Removed PRODUCT_STATIC_BOOT_CONTROL_HAL"
+
+        # FIX: تعطيل vendorsetup.sh القديم
+        if [ -f "vendorsetup.sh" ]; then
+          > vendorsetup.sh
+          echo "✅ vendorsetup.sh cleared"
+        fi
+
+        # تأكيد اسم الـ mk
         TARGET_MK="twrp_${{ github.event.inputs.DEVICE_NAME }}.mk"
         if [ ! -f "$TARGET_MK" ]; then
           FOUND_MK=$(ls *${{ github.event.inputs.DEVICE_NAME }}.mk 2>/dev/null | head -n 1)
           [ -n "$FOUND_MK" ] && mv "$FOUND_MK" "$TARGET_MK" && echo "✅ Renamed → $TARGET_MK"
         fi
 
+        # omni → twrp
         find . -type f \( -name "*.mk" -o -name "*.bp" \) \
           -exec sed -i 's/omni_/twrp_/g; s/vendor\/omni/vendor\/twrp/g' {} +
 
+        # AndroidProducts.mk
         printf '%s\n' \
           "PRODUCT_MAKEFILES := \$(LOCAL_DIR)/$TARGET_MK" \
           "COMMON_LUNCH_CHOICES := twrp_${{ github.event.inputs.DEVICE_NAME }}-eng" \
