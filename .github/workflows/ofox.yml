@@ -15,10 +15,6 @@ on:
         description: 'Device Tree Branch'
         required: true
         default: 'android-12.1'
-      DEVICE_TREE:
-        description: 'Device Tree URL'
-        required: true
-        default: 'https://github.com/akro7/twrp-spinel.git'
       DEVICE_PATH:
         description: 'Device Path'
         required: true
@@ -39,8 +35,10 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
-    - name: 1. Checkout Workflow
+    - name: 1. Checkout Device Tree
       uses: actions/checkout@v4
+      with:
+        path: 'current_device_tree'
 
     - name: 2. Maximize Build Space & Set Swap
       uses: pierotofy/set-swap-space@master
@@ -73,22 +71,14 @@ jobs:
         repo init --depth=1 \
           -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git \
           -b ${{ github.event.inputs.MANIFEST_BRANCH }}
-        mkdir -p .repo/local_manifests
-        printf '%s\n' \
-          '<?xml version="1.0" encoding="UTF-8"?>' \
-          '<manifest>' \
-          '  <remote name="akro" fetch="https://github.com/akro7" />' \
-          '  <project name="twrp-spinel"' \
-          '           path="device/xiaomi/spinel"' \
-          '           remote="akro"' \
-          '           revision="${{ github.event.inputs.USER_BRANCH }}"' \
-          '           clone-depth="1" />' \
-          '</manifest>' \
-          > .repo/local_manifests/roomservice.xml
-        cat .repo/local_manifests/roomservice.xml
+        
         repo sync -j4 --force-sync --no-clone-bundle --no-tags --optimized-fetch --prune || true
+        
+        mkdir -p ${{ github.event.inputs.DEVICE_PATH }}
+        cp -r ../current_device_tree/* ${{ github.event.inputs.DEVICE_PATH }}/
+        echo "✅ Device tree moved to workspace/${{ github.event.inputs.DEVICE_PATH }}"
 
-    - name: 5. Clone OrangeFox Recovery Source & Sync Vendor
+    - name: 5. Clone OrangeFox Recovery Source
       run: |
         cd workspace
         rm -rf bootable/recovery
@@ -96,19 +86,14 @@ jobs:
           -b ${{ github.event.inputs.FOX_BRANCH }} \
           bootable/recovery --depth=1
         echo "✅ OrangeFox cloned @ ${{ github.event.inputs.FOX_BRANCH }}"
-        
-        # جلب الـ Vendor وفك ملفات حماية وسورس أورنج فوكس الأساسي لـ Android 11/12
-        git clone https://gitlab.com/OrangeFox/misc/theme.git bootable/recovery/gui/theme --depth=1 || true
-        
         find bootable/recovery -name "*.sh" -exec chmod +x {} \;
         find bootable/recovery -name "*.py" -exec chmod +x {} \; 2>/dev/null || true
         find bootable/recovery/prebuilt -type f -exec chmod +x {} \; 2>/dev/null || true
-        echo "✅ Permissions and structure fixed"
+        echo "✅ Permissions fixed"
 
     - name: 6. Fix Device Tree & BoardConfig
       run: |
-        DEVICE_DIR="workspace/${{ github.event.inputs.DEVICE_PATH }}"
-        cd $DEVICE_DIR
+        cd workspace/${{ github.event.inputs.DEVICE_PATH }}
 
         # حذف system_dlkm الغير صالح في TWRP 12.1
         sed -i 's/\bsystem_dlkm\b[[:space:]]*//' BoardConfig.mk
@@ -117,7 +102,7 @@ jobs:
         echo "✅ PARTITION_LIST:"
         grep "PARTITION_LIST" BoardConfig.mk || echo "⚠️ Not found"
 
-        # تأكيد اسم الـ mk
+        # تصحيح وتأكيد اسم الـ mk
         TARGET_MK="twrp_${{ github.event.inputs.DEVICE_NAME }}.mk"
         if [ ! -f "$TARGET_MK" ]; then
           FOUND_MK=$(ls *${{ github.event.inputs.DEVICE_NAME }}.mk 2>/dev/null | head -n 1)
@@ -138,7 +123,6 @@ jobs:
         sed -i "s/PRODUCT_DEVICE := .*/PRODUCT_DEVICE := ${{ github.event.inputs.DEVICE_NAME }}/" "$TARGET_MK" || true
         sed -i "s/PRODUCT_NAME := .*/PRODUCT_NAME := twrp_${{ github.event.inputs.DEVICE_NAME }}/" "$TARGET_MK" || true
         
-        # تنظيف أو تصفير أي ملف سكريبت يعيق الـ Lunch
         [ -f "vendorsetup.sh" ] && > vendorsetup.sh
         echo "✅ Device tree fixed"
 
@@ -161,18 +145,17 @@ jobs:
         mkdir -p $DEVICE_ROOT/prebuilt
         mkdir -p $DEVICE_ROOT/recovery/root/lib/modules
 
-        # spinel يحتاج kernel + dtb فقط
         for f in kernel dtb.img; do
           [ ! -f "$DEVICE_ROOT/prebuilt/$f" ] && touch "$DEVICE_ROOT/prebuilt/$f"
         done
 
-        # modules خاصة بـ MT6789
         touch $DEVICE_ROOT/recovery/root/lib/modules/mtk_plpath_utils.ko
         touch $DEVICE_ROOT/recovery/root/lib/modules/sec_touchscreen.ko
 
         chmod -R 755 $DEVICE_ROOT/prebuilt
         chmod -R 755 $DEVICE_ROOT/recovery/root/lib/modules
         echo "✅ Files injected"
+        ls -la $DEVICE_ROOT/prebuilt/
 
     - name: 9. Build OrangeFox
       run: |
@@ -193,7 +176,7 @@ jobs:
         export RELAX_USES_LIBRARY_CHECK=true
         export TWRP_BUILD_COMPLETE=true
 
-        # OrangeFox إعدادات الواجهة والخصائص
+        # OrangeFox متغيرات واجهة ومميزات spinel
         export FOX_BUILD_TYPE="Unofficial"
         export FOX_MAINTAINER_PATCH_VERSION=1
         export OF_MAINTAINER="AKRO"
@@ -207,22 +190,28 @@ jobs:
         export OF_HIDE_NOTCH=1
         export FOX_REPLACE_TWRP_SPLASH=0
 
-        # إعدادات خاصة بـ MediaTek MT6789
+        # مواصفات الشيبست المشتركة لمشروعك mt6789
         export TARGET_BOARD_PLATFORM=mt6789
         export TARGET_CPU_ABI=arm64-v8a
 
-        # تهيئة بيئة العمل وبدء الكومبايل
         source build/envsetup.sh
         lunch twrp_${{ github.event.inputs.DEVICE_NAME }}-eng
 
         echo "🦊 Starting OrangeFox build for Redmi Note 15 4G (spinel)..."
+        free -h
+
         set -o pipefail
         mka recoveryimage -j4 2>&1 | tee /tmp/build.log
         BUILD_EXIT=${PIPESTATUS[0]}
 
+        echo "=== Build exit: $BUILD_EXIT ==="
+        free -h
+
         if [ $BUILD_EXIT -ne 0 ]; then
           echo "❌ Build FAILED!"
+          echo "=== ERRORS ==="
           grep -i "error:" /tmp/build.log | tail -30 || true
+          echo "=== LAST 80 LINES ==="
           tail -80 /tmp/build.log
           exit 1
         fi
@@ -233,7 +222,9 @@ jobs:
         OUT_DIR="workspace/out/target/product/${{ github.event.inputs.DEVICE_NAME }}"
         BUILD_DATE=$(date +%Y%m%d)
         echo "BUILD_DATE=$BUILD_DATE" >> $GITHUB_ENV
-        
+        echo "=== Output directory ==="
+        ls -la $OUT_DIR/ 2>/dev/null || echo "Output dir empty!"
+
         mkdir -p final_output/
         RECOVERY_IMG="$OUT_DIR/recovery.img"
         FOX_ZIP=$(find $OUT_DIR -name "OrangeFox*.zip" 2>/dev/null | head -n 1)
@@ -245,16 +236,19 @@ jobs:
           md5sum recovery.img > recovery.img.md5
           cd ..
           echo "BUILD_SUCCESS=true" >> $GITHUB_ENV
+          echo "✅ recovery.img found and processed!"
         fi
 
         if [ -n "$FOX_ZIP" ]; then
           cp "$FOX_ZIP" final_output/
           echo "BUILD_SUCCESS=true" >> $GITHUB_ENV
+          echo "✅ OrangeFox zip found and moved!"
         fi
 
         if [ ! -f "$RECOVERY_IMG" ] && [ -z "$FOX_ZIP" ]; then
           echo "BUILD_SUCCESS=false" >> $GITHUB_ENV
-          echo "❌ No output files found!"
+          echo "❌ No output found!"
+          tail -30 /tmp/build.log || true
           exit 1
         fi
 
