@@ -95,17 +95,23 @@ jobs:
       run: |
         cd workspace/${{ github.event.inputs.DEVICE_PATH }}
 
+        # حقن قيم الإضاءة الإجبارية لمنع كراش TW_MAX_BRIGHTNESS
+        echo "" >> BoardConfig.mk
+        echo "# OrangeFox Brightness Fixes" >> BoardConfig.mk
+        echo "TW_MAX_BRIGHTNESS := 2047" >> BoardConfig.mk
+        echo "TW_DEFAULT_BRIGHTNESS := 1200" >> BoardConfig.mk
+        echo "✅ TW_MAX_BRIGHTNESS injected into BoardConfig.mk"
+
         # حذف المتغير الملغي لـ BOOT_CONTROL لتجنب كراش أندرويد 12.1
         sed -i 's/PRODUCT_STATIC_BOOT_CONTROL_HAL/# PRODUCT_STATIC_BOOT_CONTROL_HAL/g' device.mk || true
         sed -i 's/PRODUCT_STATIC_BOOT_CONTROL_HAL/# PRODUCT_STATIC_BOOT_CONTROL_HAL/g' *.mk || true
-        echo "✅ Obsolete BOOT_CONTROL_HAL disabled in device.mk"
+        echo "✅ Obsolete BOOT_CONTROL_HAL disabled"
 
         # حذف system_dlkm الغير صالح في TWRP 12.1
         sed -i 's/\bsystem_dlkm\b[[:space:]]*//' BoardConfig.mk
         sed -i 's/[[:space:]]*\bsystem_dlkm\b//' BoardConfig.mk
         grep -rl "system_dlkm" . --include="*.mk" | xargs -r sed -i 's/ system_dlkm//g; s/system_dlkm //g'
-        echo "✅ PARTITION_LIST:"
-        grep "PARTITION_LIST" BoardConfig.mk || echo "⚠️ Not found"
+        echo "✅ PARTITION_LIST verified"
 
         # تصحيح وتأكيد اسم الـ mk
         TARGET_MK="twrp_${{ github.event.inputs.DEVICE_NAME }}.mk"
@@ -128,9 +134,8 @@ jobs:
         sed -i "s/PRODUCT_DEVICE := .*/PRODUCT_DEVICE := ${{ github.event.inputs.DEVICE_NAME }}/" "$TARGET_MK" || true
         sed -i "s/PRODUCT_NAME := .*/PRODUCT_NAME := twrp_${{ github.event.inputs.DEVICE_NAME }}/" "$TARGET_MK" || true
         
-        # تصفير الـ vendorsetup لمنع التوجيه التلقائي الخاطئ لـ سورس إنفينكس أو تيم وين
         [ -f "vendorsetup.sh" ] && > vendorsetup.sh
-        echo "✅ Device tree fixed"
+        echo "✅ Device tree fixed successfully"
 
     - name: 7. Patch incfs.cpp
       run: |
@@ -180,8 +185,6 @@ jobs:
         export BUILD_BROKEN_ELF_PREBUILT_PRODUCT_COPY_FILES=true
         export RELAX_USES_LIBRARY_CHECK=true
         export TWRP_BUILD_COMPLETE=true
-        
-        # منع النظام من إيقاف البناء بسبب الـ Boot control القديم
         export BUILD_BROKEN_BOOT_CONTROL_HAL=true
 
         # OrangeFox متغيرات واجهة ومميزات spinel
